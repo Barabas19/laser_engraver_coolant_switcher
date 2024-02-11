@@ -2,10 +2,8 @@
 
 # This program switches on and off the coolant for a laser engraver.
 # It inspects the traffic between Lightburn and the engraver, detects GCode commands M8/M9
-# and sends the aproppriate command to the connected ESP32 to switch on/off the coolant actuators.
+# and sends the aproppriate command to the connected ESP8266 to switch on/off the coolant actuators.
 
-# M4 - laser ON
-# M5 - laser OFF
 # M8 - coolant ON
 # M9 - coolant OFF
 
@@ -14,19 +12,16 @@ import socket
 
 HOST = "127.0.0.1"  # localhost
 LBRN_PORT = 23
-ENGRAVER_IP = "192.168.0.2" # must be adapted
+ENGRAVER_IP = "192.168.0.2"
 ENGRAVER_PORT = 23
-SWITCHER_IP = "192.168.30.27" # must be adapted
+SWITCHER_IP = "192.168.239.227"
 SWITCHER_PORT = 23
 
-GCODE_LASER_ON = "M4"
-GCODE_LASER_OFF = "M5"
 GCODE_COOLANT_ON = "M8"
 GCODE_COOLANT_OFF = "M9"
 
+COOLANT_ON = "ON"
 COOLANT_OFF = "OFF"
-COOLANT_LOW = "LOW"
-COOLANT_HIGH = "HIGH"
 
 # def telnet_to_engraver(lbrn_client_socket: socket, data: []):
 #     with telnetlib.Telnet(ENGRAVER_IP, ENGRAVER_PORT) as tn:
@@ -49,20 +44,12 @@ def process_request(lbrn_client_socket: socket, received_data: str):
     gcode_commands = received_data.split("\n")
     commands_for_engraver = []
     for command in gcode_commands:
-        if command == GCODE_LASER_ON:
-            commands_for_engraver.append(command)
+        if command == GCODE_COOLANT_ON:
             send_to_engraver(lbrn_client_socket, commands_for_engraver)
-            send_to_switcher(COOLANT_LOW)
-        elif command == GCODE_LASER_OFF:
-            commands_for_engraver.append(command)
-            send_to_engraver(lbrn_client_socket, commands_for_engraver)
-            send_to_switcher(COOLANT_OFF)
-        elif command == GCODE_COOLANT_ON:
-            send_to_engraver(lbrn_client_socket, commands_for_engraver)
-            send_to_switcher(COOLANT_HIGH)
+            send_to_switcher(COOLANT_ON)
         elif command == GCODE_COOLANT_OFF:
             send_to_engraver(lbrn_client_socket, commands_for_engraver)
-            send_to_switcher(COOLANT_LOW)
+            send_to_switcher(COOLANT_OFF)
         else:
             commands_for_engraver.append(command)
     send_to_engraver(lbrn_client_socket, commands_for_engraver)
@@ -128,7 +115,7 @@ def main():
     if not send_to_switcher(timeout=3600):
         quit()
     print("Switcher connected!")
-    send_to_switcher(COOLANT_LOW)
+    send_to_switcher(COOLANT_OFF)
     lbrn_server_socket = start_server(HOST, LBRN_PORT)
     listen_lbrn(lbrn_server_socket)
 
