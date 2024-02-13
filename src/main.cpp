@@ -3,12 +3,17 @@
 #include "project_config.h"
 
 #define PORT             23
-#define COOLANT_PIN      4
-#define INDICATOR_PIN    5
+#define COOLANT_PIN_HIGH 4
+#define COOLANT_PIN_LOW  5
 
-#define COOLANT_ON_CMD   "ON"
+#define LASER_ON_CMD     "M4"
+#define LASER_OFF_CMD    "M5"
+#define COOLANT_ON_CMD   "M8"
+#define COOLANT_OFF_CMD  "M9"
 
 WiFiServer server(PORT);
+WiFiClient client;
+WiFiClient lbrn_client;
 
 void reboot() {
   for(int i = 3; i > 0; i--) {
@@ -37,11 +42,11 @@ void connect_to_ap(const char* ssid, const char* psk) {
 
 void switch_coolant(bool on) {
   if(on) {
-    digitalWrite(COOLANT_PIN, HIGH);
-    digitalWrite(INDICATOR_PIN, LOW);
+    digitalWrite(COOLANT_PIN_HIGH, HIGH);
+    digitalWrite(COOLANT_PIN_LOW, LOW);
   } else {
-    digitalWrite(COOLANT_PIN, LOW);
-    digitalWrite(INDICATOR_PIN, HIGH);
+    digitalWrite(COOLANT_PIN_HIGH, LOW);
+    digitalWrite(COOLANT_PIN_LOW, HIGH);
   }
 }
 
@@ -54,31 +59,48 @@ void indicate_readiness() {
   }
 }
 
-void process_commands() {
+void process_communication() {
+  if(!lbrn_client) {return;}
   while(1) {
-    WiFiClient client = server.accept();
-    if(client) {
-      Serial.printf("client %s connected.\n", client.remoteIP().toString().c_str());
-      while(client.available()) {
-        String command = client.readString();
-        Serial.printf("Received: %s\n", command.c_str());
-        switch_coolant(command.equals(COOLANT_ON_CMD));
+    if(!lbrn_client.connected() || !client.connected()) {break;}
+    if(lbrn_client.available()) {
+      String command = lbrn_client.readString();
+      Serial.printf("Received: %s\n", command.c_str());
+      client.write(command.c_str());
+      String response = client.readString();
+      Serial.printf("Engraver:\n%s\n", response.c_str());
+      lbrn_client.write(response.c_str());
+    }
+  }
+}
+
+void connect_lbrn_engraver() {
+  while(1) {
+    lbrn_client = server.accept();
+    if(lbrn_client) {
+      Serial.printf("Lightburn connected (%s).\n", lbrn_client.remoteIP().toString().c_str());
+      if(client.connect(ENGRAVER_IP, ENGRAVER_PORT)) {
+        Serial.printf("Engraver connected (%s).\n", ENGRAVER_IP);
+        process_communication();
+        client.stop();
+      } else {
+        Serial.printf("Engraver is not reachable on %s\n", ENGRAVER_IP);
       }
 
-      client.stop();
+      lbrn_client.stop();
     }
   }
 }
 
 void setup() {
   Serial.begin(115200);
-  pinMode(COOLANT_PIN, OUTPUT);
-  pinMode(INDICATOR_PIN, OUTPUT);
+  pinMode(COOLANT_PIN_HIGH, OUTPUT);
+  pinMode(COOLANT_PIN_LOW, OUTPUT);
   switch_coolant(false);
   connect_to_ap(SSID, PASS);
   server.begin();
   indicate_readiness();
-  process_commands();
+  connect_lbrn_engraver();
 }
 
 void loop() {}
