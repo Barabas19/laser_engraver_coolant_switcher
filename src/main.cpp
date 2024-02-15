@@ -87,27 +87,25 @@ void setup() {
 #elif BOARD == MEGA2560
 
 void setup() {
-  uint64_t baud_rates[] = {9600, 38400, 57600, 115200};
-  const uint64_t interval_ms = 5000;
-  
-  Serial.begin(115200);
+  uint64_t baud_rate = 115200;
+  Serial.begin(baud_rate);
+  Serial1.begin(baud_rate);
+  Serial2.begin(baud_rate);
   delay(3000);
-  Serial.println("Start baudrate detection on Serial1");
-  uint64_t start;
-  for(uint16_t i = 0; i < sizeof(baud_rates) / sizeof(uint64_t); i++) {
-    uint64_t baud_rate = baud_rates[i];
-    Serial.print("Baudrate ");
-    Serial.println(uint32_t(baud_rate));
-    Serial1.begin(baud_rate);
-    start = millis();
-    while(millis() < start + interval_ms) {
-      while(Serial1.available()) {
-        Serial.write(Serial1.read());
-      }
-      delayMicroseconds(16);
+  Serial.println("Start communication between Serial1 and Serial2...");
+  while(1) {
+    if(Serial1.available()) {
+      String str = Serial1.readString();
+      Serial2.print(str);
+      Serial.print("Serial1: ");
+      Serial.println(str);
     }
-
-    Serial1.end();
+    if(Serial2.available()) {
+      String str = Serial2.readString();
+      Serial1.print(str);
+      Serial.print("Serial2: ");
+      Serial.println(str);
+    }
   }
 
   Serial.println("Baudrate detection finished.");
