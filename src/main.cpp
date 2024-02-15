@@ -1,4 +1,7 @@
 #include <Arduino.h>
+
+#if BOARD == ESP8266
+
 #include <ESP8266WiFi.h>
 #include "project_config.h"
 
@@ -80,5 +83,36 @@ void setup() {
   indicate_readiness();
   process_commands();
 }
+
+#elif BOARD == MEGA2560
+
+void setup() {
+  uint64_t baud_rates[] = {9600, 38400, 57600, 115200};
+  const uint64_t interval_ms = 5000;
+  
+  Serial.begin(115200);
+  delay(3000);
+  Serial.println("Start baudrate detection on Serial1");
+  uint64_t start;
+  for(uint16_t i = 0; i < sizeof(baud_rates) / sizeof(uint64_t); i++) {
+    uint64_t baud_rate = baud_rates[i];
+    Serial.print("Baudrate ");
+    Serial.println(uint32_t(baud_rate));
+    Serial1.begin(baud_rate);
+    start = millis();
+    while(millis() < start + interval_ms) {
+      while(Serial1.available()) {
+        Serial.write(Serial1.read());
+      }
+      delayMicroseconds(16);
+    }
+
+    Serial1.end();
+  }
+
+  Serial.println("Baudrate detection finished.");
+}
+
+#endif
 
 void loop() {}
