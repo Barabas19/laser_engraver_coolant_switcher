@@ -15,27 +15,6 @@ GCODE_LASER_OFF = "M5"
 GCODE_COOLANT_ON = "M8"
 GCODE_COOLANT_OFF = "M9"
 
-FAN_GPIO = 18
-COOLANT_GPIO = 17
-
-import RPi.GPIO as GPIO
-
-def change_coolant_pin_state(state):
-    if state == "on":
-        print("Turning coolant on")
-        GPIO.output(COOLANT_GPIO, GPIO.HIGH)
-    else:
-        print("Turning coolant off")
-        GPIO.output(COOLANT_GPIO, GPIO.LOW)
-
-def change_fan_pin_state(state):
-    if state == "on":
-        print("Turning fan on")
-        GPIO.output(FAN_GPIO, GPIO.HIGH)
-    else:
-        print("Turning fan off")
-        GPIO.output(FAN_GPIO, GPIO.LOW)
-
 def forward_from_socket_to_serial(client_socket, ser):
     while True:
         try:
@@ -44,16 +23,6 @@ def forward_from_socket_to_serial(client_socket, ser):
             if not data:
                 break
             print(f"Received from socket: {data.decode('utf-8')}")
-
-            # Check if the message is a G-code command, that switches the laser or coolant on or off
-            if data.decode('utf-8').strip() == GCODE_LASER_ON:
-                change_fan_pin_state("on")
-            elif data.decode('utf-8').strip() == GCODE_LASER_OFF:
-                change_fan_pin_state("off")
-            elif data.decode('utf-8').strip() == GCODE_COOLANT_ON:
-                change_coolant_pin_state("on")
-            elif data.decode('utf-8').strip() == GCODE_COOLANT_OFF:
-                change_coolant_pin_state("off")
 
             # Write message to serial port
             ser.write(data)
@@ -65,7 +34,7 @@ def forward_from_serial_to_socket(client_socket, ser):
     while True:
         try:
             # Read message from serial port
-            data = ser.read(1024)
+            data = ser.readline()
             if not data:
                 break
             print(f"Received from serial: {data.decode('utf-8')}")
@@ -90,12 +59,14 @@ def listen_and_forward(port, serial_port):
     # Bind the socket to a specific address and port
     server_socket.bind((host_ip, port))
 
-    # Listen for incoming connections (max backlog is set to 5)
-    server_socket.listen(5)
+    # Listen for incoming connections (max backlog is set to 1)
+    server_socket.listen(1)
     print(f"Listening for connections on {host_ip}:{port}")
 
     # Open the serial port
     ser = serial.Serial(serial_port)
+    if not ser.is_open:
+        ser.open()
     print(f"Opened serial port {serial_port}")
 
     try:
@@ -118,6 +89,8 @@ def listen_and_forward(port, serial_port):
         # Close the serial port
         ser.close()
         print("Serial port closed")
+        client_socket.close()
+        server_socket.close()
 
 def main():
     # Set the port to listen on
