@@ -1,124 +1,142 @@
 #! /usr/bin/env python3
 
-# This program switches on and off the coolant for a laser engraver.
-# It inspects the traffic between Lightburn and the engraver, detects GCode commands M8/M9
-# and sends the aproppriate command to the connected ESP8266 to switch on/off the coolant actuators.
-
-# M8 - coolant ON
-# M9 - coolant OFF
+# This program is a gateway between a serial port and a socket. 
+# It reads data from the serial port and forwards it to the socket, and vice versa.
 
 import socket
-# import telnetlib
+import threading
+import time
+import serial
+import serial.tools.list_ports
+import argparse
 
-HOST = "127.0.0.1"  # localhost
-LBRN_PORT = 23
-ENGRAVER_IP = "192.168.0.2"
-ENGRAVER_PORT = 23
-SWITCHER_IP = "192.168.239.227"
-SWITCHER_PORT = 23
-
+GCODE_LASER_ON = "M4"
+GCODE_LASER_OFF = "M5"
 GCODE_COOLANT_ON = "M8"
 GCODE_COOLANT_OFF = "M9"
 
-COOLANT_ON = "ON"
-COOLANT_OFF = "OFF"
+FAN_GPIO = 18
+COOLANT_GPIO = 17
 
-# def telnet_to_engraver(lbrn_client_socket: socket, data: []):
-#     with telnetlib.Telnet(ENGRAVER_IP, ENGRAVER_PORT) as tn:
-#         tn.write(("\n".join(data) + "\n").encode())
-#         oks_in_response = 0
-#         while oks_in_response < len(data):
-#             response = tn.read_all()
-#             oks_in_response += response.decode().count("ok")
-#             lbrn_client_socket.send_all(response)
+import RPi.GPIO as GPIO
 
-# def switch_coolant(data: str):
-#     with telnetlib.Telnet(SWITCHER_IP, SWITCHER_PORT) as tn:
-#         print(f"to switcher: {data}")
-#         tn.write(data.encode())
-#         oks_in_response = 0
-#         response = tn.read_all()
-#         print(f"from switcher: {response}")
+def change_coolant_pin_state(state):
+    if state == "on":
+        print("Turning coolant on")
+        GPIO.output(COOLANT_GPIO, GPIO.HIGH)
+    else:
+        print("Turning coolant off")
+        GPIO.output(COOLANT_GPIO, GPIO.LOW)
 
-def process_request(lbrn_client_socket: socket, received_data: str):
-    gcode_commands = received_data.split("\n")
-    commands_for_engraver = []
-    for command in gcode_commands:
-        if command == GCODE_COOLANT_ON:
-            send_to_engraver(lbrn_client_socket, commands_for_engraver)
-            send_to_switcher(COOLANT_ON)
-        elif command == GCODE_COOLANT_OFF:
-            send_to_engraver(lbrn_client_socket, commands_for_engraver)
-            send_to_switcher(COOLANT_OFF)
-        else:
-            commands_for_engraver.append(command)
-    send_to_engraver(lbrn_client_socket, commands_for_engraver)
+def change_fan_pin_state(state):
+    if state == "on":
+        print("Turning fan on")
+        GPIO.output(FAN_GPIO, GPIO.HIGH)
+    else:
+        print("Turning fan off")
+        GPIO.output(FAN_GPIO, GPIO.LOW)
 
-def send_to_engraver(lbrn_client_socket: socket = None, data: [] = None, timeout: float = 1.0) -> bool:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        sock.connect((ENGRAVER_IP, ENGRAVER_PORT))
-        if data != None and lbrn_client_socket != None:
-            sock.sendall(("\n".join(data) + "\n").encode())
-            oks_in_response = 0
-            while oks_in_response < len(data):
-                response = sock.read_all()
-                oks_in_response += response.decode().count("ok")
-                lbrn_client_socket.send_all(response)
-    except TimeoutError:
-        print("No connection to engraver")
-        sock.close()
-        return False
-    sock.close()
-    return True
-    
-def send_to_switcher(data: str = "", timeout: float = 1.0) -> bool:
-    print(f"Set coolant to {data}")
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        sock.connect((SWITCHER_IP, SWITCHER_PORT))
-        if data != "":
-            sock.sendall(data.encode())
-    except TimeoutError:
-        print("No connection to switcher")
-        sock.close()
-        return False
-    sock.close()
-    return True
-
-def start_server(localhost: str, port: int) -> socket:
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind((localhost, port))
-    server_socket.listen(5)
-    return server_socket
-
-def listen_lbrn(server_socket: socket):
+def forward_from_socket_to_serial(client_socket, ser):
     while True:
-        client_socket, _ = server_socket.accept()
-        print("Lightburn connected!")
-        while True:
-            received_data = client_socket.recv(1024).decode()
-            if received_data == "":
-                print("Lightburn disconnected!")
-                send_to_switcher(COOLANT_OFF)
+        try:
+            # Receive message from socket
+            data = client_socket.recv(1024)
+            if not data:
                 break
-            process_request(client_socket, received_data)
+            print(f"Received from socket: {data.decode('utf-8')}")
+
+            # Check if the message is a G-code command, that switches the laser or coolant on or off
+            if data.decode('utf-8').strip() == GCODE_LASER_ON:
+                change_fan_pin_state("on")
+            elif data.decode('utf-8').strip() == GCODE_LASER_OFF:
+                change_fan_pin_state("off")
+            elif data.decode('utf-8').strip() == GCODE_COOLANT_ON:
+                change_coolant_pin_state("on")
+            elif data.decode('utf-8').strip() == GCODE_COOLANT_OFF:
+                change_coolant_pin_state("off")
+
+            # Write message to serial port
+            ser.write(data)
+        except Exception as e:
+            print(f"Error forwarding data from socket to serial: {e}")
+            break
+
+def forward_from_serial_to_socket(client_socket, ser):
+    while True:
+        try:
+            # Read message from serial port
+            data = ser.read(1024)
+            if not data:
+                break
+            print(f"Received from serial: {data.decode('utf-8')}")
+
+            # Send message to socket
+            client_socket.sendall(data)
+        except Exception as e:
+            print(f"Error forwarding data from serial to socket: {e}")
+            break
+
+def listen_and_forward(port, serial_port):
+    # Verify if serial port is available
+    while serial_port not in [port.device for port in serial.tools.list_ports.comports()]:
+        print(f"Serial port {serial_port} not found. Retrying in 5 seconds...")
+        time.sleep(5)
+
+    host_ip = "0.0.0.0"
+
+    # Create a socket object
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    # Bind the socket to a specific address and port
+    server_socket.bind((host_ip, port))
+
+    # Listen for incoming connections (max backlog is set to 5)
+    server_socket.listen(5)
+    print(f"Listening for connections on {host_ip}:{port}")
+
+    # Open the serial port
+    ser = serial.Serial(serial_port)
+    print(f"Opened serial port {serial_port}")
+
+    try:
+        while True:
+            # Wait for a connection
+            client_socket, client_address = server_socket.accept()
+            print(f"Accepted connection from {client_address}")
+
+            # Start a thread to forward data from socket to serial
+            socket_to_serial_thread = threading.Thread(target=forward_from_socket_to_serial, args=(client_socket, ser))
+            socket_to_serial_thread.start()
+
+            # Start a thread to forward data from serial to socket
+            serial_to_socket_thread = threading.Thread(target=forward_from_serial_to_socket, args=(client_socket, ser))
+            serial_to_socket_thread.start()
+
+    except KeyboardInterrupt:
+        print("Interrupted")
+    finally:
+        # Close the serial port
+        ser.close()
+        print("Serial port closed")
 
 def main():
-    print("Connecting to engraver...")
-    if not send_to_engraver(timeout=3600):
-        quit()
-    print("Engraver connected!")
-    print("Connecting to switcher...")
-    if not send_to_switcher(timeout=3600):
-        quit()
-    print("Switcher connected!")
-    send_to_switcher(COOLANT_OFF)
-    lbrn_server_socket = start_server(HOST, LBRN_PORT)
-    listen_lbrn(lbrn_server_socket)
+    # Set the port to listen on
+    port = 23
 
+    # Create the parser
+    parser = argparse.ArgumentParser(description="Listen and forward data")
+
+    # Add the arguments
+    parser.add_argument('SerialPort', metavar='serialport', type=str, help='the path to the serial port')
+
+    # Parse the arguments
+    args = parser.parse_args()
+
+    # Now you can use args.SerialPort to get the serial port path
+    serial_port = args.SerialPort
+
+    # Start listening for incoming messages from the socket and forward them to the serial port
+    listen_and_forward(port, serial_port)
 
 if __name__ == "__main__":
     main()
