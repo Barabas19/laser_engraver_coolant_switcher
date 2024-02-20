@@ -9,13 +9,25 @@ import time
 import serial
 import serial.tools.list_ports
 import argparse
+import RPi.GPIO as GPIO
 
 GCODE_LASER_ON = "M4"
 GCODE_LASER_OFF = "M5"
 GCODE_COOLANT_ON = "M8"
 GCODE_COOLANT_OFF = "M9"
 
-def forward_from_socket_to_serial(client_socket, ser):
+COOLANT_GPIO_PIN = 17
+
+req_coolant_on = False
+req_coolant_off = False
+
+def change_coolant_state(state: bool):
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(COOLANT_GPIO_PIN, GPIO.OUT)
+    GPIO.output(COOLANT_GPIO_PIN, state)
+    GPIO.cleanup()
+
+def forward_from_socket_to_serial(client_socket: socket, ser: serial.Serial):
     while True:
         try:
             # Receive message from socket
@@ -24,13 +36,20 @@ def forward_from_socket_to_serial(client_socket, ser):
                 break
             print(f"Received from socket: {data.decode('utf-8')}")
 
+            if data.decode('utf-8').strip() == GCODE_COOLANT_ON:
+                print("Coolant ON request received")
+                req_coolant_on = True
+            elif data.decode('utf-8').strip() == GCODE_COOLANT_OFF:
+                print("Coolant OFF request received")
+                req_coolant_off = True
+
             # Write message to serial port
             ser.write(data)
         except Exception as e:
             print(f"Error forwarding data from socket to serial: {e}")
             break
 
-def forward_from_serial_to_socket(client_socket, ser):
+def forward_from_serial_to_socket(client_socket: socket, ser: serial.Serial):
     while True:
         try:
             # Read message from serial port
@@ -38,6 +57,16 @@ def forward_from_serial_to_socket(client_socket, ser):
             if not data:
                 break
             print(f"Received from serial: {data.decode('utf-8')}")
+
+            if "ok" in data.decode('utf-8').strip():
+                if req_coolant_on:
+                    print("Coolant switched ON")
+                    req_coolant_on = False
+                    change_coolant_state(True)
+                elif req_coolant_off:
+                    print("Coolant switched OFF")
+                    req_coolant_off = False
+                    change_coolant_state(False)
 
             # Send message to socket
             client_socket.sendall(data)
